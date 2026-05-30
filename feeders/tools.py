@@ -20,7 +20,7 @@ def valid_crop_resize(data_numpy,valid_frame_num,p_interval,window):
         data = data_numpy[:, begin+bias:end-bias, :, :]# center_crop
         cropped_length = data.shape[1]
     else:
-        p = np.random.rand(1)*(p_interval[1]-p_interval[0])+p_interval[0]
+        p = np.random.rand()*(p_interval[1]-p_interval[0])+p_interval[0]
         cropped_length = np.minimum(np.maximum(int(np.floor(valid_size*p)),64), valid_size)# constraint cropped_length lower bound as 64
         bias = np.random.randint(0,valid_size-cropped_length+1)
         data = data_numpy[:, begin+bias:begin+bias+cropped_length, :, :]
@@ -75,6 +75,7 @@ def auto_pading(data_numpy, size, random_pad=False):
 
 def random_choose(data_numpy, size, auto_pad=True):
     # input: C,T,V,M 随机选择其中一段，不是很合理。因为有0
+    # Input: C,T,V,M Randomly selecting a segment is not very reasonable because it contains 0.
     C, T, V, M = data_numpy.shape
     if T == size:
         return data_numpy

@@ -28,6 +28,8 @@ def conv_init(conv):
     if conv.weight is not None:
         nn.init.kaiming_normal_(conv.weight, mode='fan_out')
         # 使用kaiming正态分布初始化卷积层参数，通过创建随机矩阵显式创建权重，则应进行设置mode=‘fan_out’
+        # If you initialize the convolutional layer parameters using the Kaiming normal distribution
+        # and explicitly create the weights by creating a random matrix, then you should set `mode='fan_out'`.
     if conv.bias is not None:
         nn.init.constant_(conv.bias, 0)
 
@@ -90,9 +92,9 @@ class TemporalConv(nn.Module):
         return x
 
 
-class J-GTM(nn.Module):
+class JGTM(nn.Module):
     def __init__(self, in_channels, out_channels, stride, num_heads):
-        super(J-GTM, self).__init__()
+        super(JGTM, self).__init__()
 
         # Temporal Self-Attention Module
         self.dim_k = out_channels 
@@ -140,7 +142,7 @@ class J-GTM(nn.Module):
         return out_tsa
 
 
-class LG-TCN_unit(nn.Module):
+class LGTCN_unit(nn.Module):
     def __init__(self,
                  in_channels,
                  out_channels,
@@ -156,10 +158,16 @@ class LG-TCN_unit(nn.Module):
 
         self.temporal_weight = DynamicFrameWeighting(in_channels)
         # Multiple branches of temporal convolution
+
         self.num_branches = len(dilations) + 2
         # 模型除了两条带有dilation的分支外，还有一个Maxpool 和 普通的1*1卷积，所以+2
+        # In addition to the two branches with dilation, the model also has a Maxpool and a regular 1x1 convolution, hence +2.
+        
         branch_channels = out_channels // self.num_branches
         # 计算每个分支的平均维度，这样所有分支结果进行concat之后维度与out_channels一致
+        # Calculate the average dimension of each branch so that the dimension of
+        # all branch results concatenated is consistent with out_channels.
+
         if type(kernel_size) == list:
             assert len(kernel_size) == len(dilations)
         else:
@@ -200,14 +208,14 @@ class LG-TCN_unit(nn.Module):
         ))
         
         self.branches.append(nn.Sequential(
-                J-GTM(
+                JGTM(
                     branch_channels,
                     branch_channels,
                     stride=stride,
                     num_heads=num_heads)
         ))
         self.branches.append(nn.Sequential(
-                J-GTM(
+                JGTM(
                     branch_channels,
                     branch_channels,
                     stride=stride,
@@ -254,13 +262,14 @@ class LG-TCN_unit(nn.Module):
         x4 = self.branches[3](x)
         out = torch.cat((x1, x2, x3, x4), dim=1)
         # 横向concat连接
+        # Horizontal concat connection
         out += res
         return out
 
 
-class LG-GC(nn.Module):
+class LGGC(nn.Module):
     def __init__(self, in_channels, out_channels, rel_reduction=8, mid_reduction=1):
-        super(LG-GC, self).__init__()
+        super(LGGC, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         if in_channels == 3 or in_channels == 9:
@@ -270,9 +279,14 @@ class LG-GC(nn.Module):
             self.rel_channels = in_channels // rel_reduction
             self.mid_channels = in_channels // mid_reduction
             # //表示 除 之后向下取整，不大于商的最大整数
+            # This means the largest integer that is not greater than the
+            # quotient after rounding down from the nearest integer.
+
         self.conv1 = nn.Conv2d(self.in_channels, self.rel_channels, kernel_size=1)
         self.conv2 = nn.Conv2d(self.in_channels, self.rel_channels, kernel_size=1)
         # 1*1卷积改变维度，相当于T*N*C -> T*N*C/r
+        # A 1x1 convolution changes the dimension, equivalent to T*N*C -> T*N*C/r
+
         self.conv3 = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1)
         self.conv4 = nn.Conv2d(self.rel_channels, self.out_channels, kernel_size=1)
         self.conv5 = nn.Conv2d(self.in_channels, self.rel_channels, kernel_size=1)
@@ -284,6 +298,8 @@ class LG-GC(nn.Module):
             if isinstance(m, nn.Conv2d):
                 conv_init(m)
                 # isinstance用来判断m与后面一个参数的类型（也就是是卷积还是bn操作）是否相同，再考虑进行初始化
+                # `isinstance` is used to determine if the type of `m` is the same as the type of the next parameter
+                # (i.e., whether it's a convolution or a batch normalization operation) before considering initialization.
             elif isinstance(m, nn.BatchNorm2d):
                 bn_init(m, 1)
 
@@ -291,6 +307,8 @@ class LG-GC(nn.Module):
         x1, x2, x3 = self.conv1(x).mean(-2), self.conv2(x).mean(-2), self.conv3(x)
         x1 = self.tanh(x1.unsqueeze(-1) - x2.unsqueeze(-2))
         # 表示M()函数计算Xi与Xj之间的通道特定关系 x1: N*C*V*1 - N*C*1*V -> N*C/r*V*V
+        # The M() function calculates the channel-specific relationship between
+        # Xi and Xj: x1: N*C*V*1 - N*C*1*V -> N*C/r*V*V
         x_attention_source = self.conv5(x)  # (N,rel_channels,T,V)
         N, C, T, V = x_attention_source.size()
         att_output_of_each_channels = []
@@ -311,14 +329,23 @@ class LG-GC(nn.Module):
 
         x1 = self.conv4(x1) * alpha + (A.unsqueeze(0).unsqueeze(0) if A is not None else 0) + (self.conv4(res) if res is not None else 0) * beta       # N,C,V,V
         # conv4的作用：M（）函数计算相关性之后，通过1*1卷积将Q维度改为C_out，从而能与输入特征X的新维度C_out对应
+        # The purpose of conv4 is to transform the Q dimension into C_out through a 1*1 convolution
+        # after the M() function calculates the correlation, so that it corresponds to the new dimension
+        # C_out of the input feature X.
+
         x1 = torch.einsum('ncuv,nctv->nctu', x1, x3)
         # 爱因斯坦求和约定，对前 -> 后消除的字母进行求和，即对v进行求和
+        # Einstein's summation convention sums the letters that are
+        # eliminated before and after the transition, i.e., summing over 'v'.
+
         return x1
         # 得到的Q矩阵与conv3卷积后输入特征相乘，得到输出特征
+        # The resulting Q matrix is ​​multiplied by the input features after conv3 convolution to obtain the output features.
     
 
 class unit_tcn(nn.Module):
     # 该普通时间卷积是为了给残差连接进行时间卷积
+    # This ordinary temporal convolution is used to perform temporal convolution on the residual connections.
     def __init__(self, in_channels, out_channels, kernel_size=9, stride=1):
         super(unit_tcn, self).__init__()
         pad = int((kernel_size - 1) / 2)
@@ -335,9 +362,9 @@ class unit_tcn(nn.Module):
         return x
 
 
-class LG-GCN_unit(nn.Module):
+class LGGCN_unit(nn.Module):
     def __init__(self, in_channels, out_channels, A, coff_embedding=4, adaptive=True, residual=True):
-        super(unit_lg_gcn, self).__init__()
+        super(LGGCN_unit, self).__init__()
         inter_channels = out_channels // coff_embedding
         self.inter_c = inter_channels
         self.out_c = out_channels
@@ -346,7 +373,7 @@ class LG-GCN_unit(nn.Module):
         self.num_subset = A.shape[0]
         self.convs = nn.ModuleList()
         for i in range(self.num_subset):
-            self.convs.append(LG-GC(in_channels, out_channels))
+            self.convs.append(LGGC(in_channels, out_channels))
 
         if residual:
             if in_channels != out_channels:
@@ -361,9 +388,13 @@ class LG-GCN_unit(nn.Module):
         if self.adaptive:
             self.PA = nn.Parameter(torch.from_numpy(A.astype(np.float32)))
             # 将PA添加到参数列表中，送入优化器随着训练一起学习更新；后面from_numpy等 是将数据类型修改为float32的数组A，改为张量类型
+            # Add PA to the parameter list and feed it into the optimizer for learning and updating during training;
+            # later, `from_numpy` etc., change the data type of array A from float32 to tensor type.
         else:
             self.A = Variable(torch.from_numpy(A.astype(np.float32)), requires_grad=False)
             # requires_grad是参不参与误差反向传播, 要不要计算梯度
+            # `requires_grad` determines whether the parameter participates in
+            # error backpropagation and whether the gradient needs to be calculated.
         self.alpha = nn.Parameter(torch.zeros(1))
         self.beta = nn.Parameter(torch.zeros(1))
         self.bn = nn.BatchNorm2d(out_channels)
@@ -392,11 +423,11 @@ class LG-GCN_unit(nn.Module):
         return y
 
 
-class LG-SGNet_Block(nn.Module):
+class LGSGNet_Block(nn.Module):
     def __init__(self, in_channels, out_channels, A, stride=1, residual=True, adaptive=True, kernel_size=5, dilations=[1,2], num_heads=4):
-        super(LG-SGNet_Block, self).__init__()
-        self.gcn1 = LG-GCN_unit(in_channels, out_channels, A, adaptive=adaptive)
-        self.tcn1 = LG-TCN_unit(out_channels, out_channels, kernel_size=kernel_size, stride=stride, dilations=dilations,
+        super(LGSGNet_Block, self).__init__()
+        self.gcn1 = LGGCN_unit(in_channels, out_channels, A, adaptive=adaptive)
+        self.tcn1 = LGTCN_unit(out_channels, out_channels, kernel_size=kernel_size, stride=stride, dilations=dilations,
                                             residual=False, num_heads=num_heads)
         self.relu = nn.ReLU(inplace=True)
         if not residual:
@@ -421,27 +452,28 @@ class Model(nn.Module):
         if graph is None:
             raise ValueError()
         # 自定义的异常处理
+        # Custom exception handling
         else:
             Graph = import_class(graph)
             self.graph = Graph(**graph_args)
 
-        A = self.graph.A # 3,25,25   一开始是 3  channels
+        A = self.graph.A # 3,25,25   一开始是 3  channels (3,25,25 It started as 3 channels.)
 
         self.num_class = num_class
         self.num_point = num_point
         self.data_bn = nn.BatchNorm1d(num_person * in_channels * num_point)
 
         base_channel = 64
-        self.l1 = LG-SGNet_Block(in_channels, base_channel, A, residual=False, adaptive=adaptive)
-        self.l2 = LG-SGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
-        self.l3 = LG-SGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
-        self.l4 = LG-SGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
-        self.l5 = LG-SGNet_Block(base_channel, base_channel*2, A, stride=2, adaptive=adaptive)
-        self.l6 = LG-SGNet_Block(base_channel*2, base_channel*2, A, adaptive=adaptive)
-        self.l7 = LG-SGNet_Block(base_channel*2, base_channel*2, A, adaptive=adaptive)
-        self.l8 = LG-SGNet_Block(base_channel*2, base_channel*4, A, stride=2, adaptive=adaptive)
-        self.l9 = LG-SGNet_Block(base_channel*4, base_channel*4, A, adaptive=adaptive)
-        self.l10 = LG-SGNet_Block(base_channel*4, base_channel*4, A, adaptive=adaptive)
+        self.l1 = LGSGNet_Block(in_channels, base_channel, A, residual=False, adaptive=adaptive)
+        self.l2 = LGSGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
+        self.l3 = LGSGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
+        self.l4 = LGSGNet_Block(base_channel, base_channel, A, adaptive=adaptive)
+        self.l5 = LGSGNet_Block(base_channel, base_channel*2, A, stride=2, adaptive=adaptive)
+        self.l6 = LGSGNet_Block(base_channel*2, base_channel*2, A, adaptive=adaptive)
+        self.l7 = LGSGNet_Block(base_channel*2, base_channel*2, A, adaptive=adaptive)
+        self.l8 = LGSGNet_Block(base_channel*2, base_channel*4, A, stride=2, adaptive=adaptive)
+        self.l9 = LGSGNet_Block(base_channel*4, base_channel*4, A, adaptive=adaptive)
+        self.l10 = LGSGNet_Block(base_channel*4, base_channel*4, A, adaptive=adaptive)
 
         self.fc = nn.Linear(base_channel*4, num_class)
         nn.init.normal_(self.fc.weight, 0, math.sqrt(2. / num_class))
@@ -456,6 +488,8 @@ class Model(nn.Module):
             N, T, VC = x.shape
             x = x.view(N, T, self.num_point, -1).permute(0, 3, 1, 2).contiguous().unsqueeze(-1)
             # 先将x的维度改为N,T,V,C,然后根据索引调换位置 -> N,C,T,V,在最后的索引位置上添加一个 M 维度
+            # First, change the dimensions of x to N, T, V, C. Then, rearrange the positions
+            # according to the index -> N, C, T, V. Finally, add a dimension M at the last index position.
         N, C, T, V, M = x.size()
 
         x = x.permute(0, 4, 3, 1, 2).contiguous().view(N, M * V * C, T)

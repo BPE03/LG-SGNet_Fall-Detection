@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 # torch
+from sympy import python
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
@@ -27,8 +28,10 @@ import yaml
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from torchlight import DictAction
+from torchlight.torchlight import DictAction
 
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 import resource
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -118,6 +121,11 @@ def get_parser():
         default=[1, 5],
         nargs='+',
         help='which Top K accuracy will be shown')
+    parser.add_argument(
+        '--debug',
+        type=str2bool,
+        default=False,
+        help='use debug mode')
 
     # feeder
     parser.add_argument(
@@ -259,14 +267,18 @@ class Processor():
                 shuffle=True,
                 num_workers=self.arg.num_worker,
                 drop_last=True,
-                worker_init_fn=init_seed)
+                worker_init_fn=init_seed,
+                #pin_memory=True
+            )
         self.data_loader['test'] = torch.utils.data.DataLoader(
             dataset=Feeder(**self.arg.test_feeder_args),
             batch_size=self.arg.test_batch_size,
             shuffle=False,
             num_workers=self.arg.num_worker,
             drop_last=False,
-            worker_init_fn=init_seed)
+            worker_init_fn=init_seed,
+            #pin_memory=True
+        )
 
     def load_model(self):
         output_device = self.arg.device[0] if type(self.arg.device) is list else self.arg.device
@@ -285,8 +297,25 @@ class Processor():
                 with open(self.arg.weights, 'r') as f:
                     weights = pickle.load(f)
             else:
-                weights = torch.load(self.arg.weights)
+                weights = torch.load(self.arg.weights, weights_only=False)
+                if isinstance(weights, dict) and 'model_state_dict' in weights:
+                    weights = weights['model_state_dict']
 
+            # Handle full checkpoint dict vs raw weights
+            if isinstance(weights, dict) and 'model_state_dict' in weights:
+                self.print_log('Detected full checkpoint format.')
+                # Restore training state if available
+                if 'global_step' in weights:
+                    self.global_step = weights['global_step']
+                if 'best_acc' in weights:
+                    self.best_acc = weights.get('best_acc', 0)
+                if 'best_acc_epoch' in weights:
+                    self.best_acc_epoch = weights.get('best_acc_epoch', 0)
+                if 'epoch' in weights:
+                    # Only override start_epoch if not explicitly set by user
+                    if self.arg.start_epoch == 0:
+                        self.arg.start_epoch = weights['epoch']
+                weights = weights['model_state_dict']  # Extract just the model weights
             weights = OrderedDict([[k.split('module.')[-1], v.cuda(output_device)] for k, v in weights.items()])
 
             keys = list(weights.keys())
@@ -370,6 +399,25 @@ class Processor():
         split_time = time.time() - self.cur_time
         self.record_time()
         return split_time
+    
+    def resume_checkpoint(self, checkpoint_path):
+        self.print_log(f'Resuming from checkpoint: {checkpoint_path}')
+        checkpoint = torch.load(checkpoint_path, map_location=f'cuda:{self.output_device}', weights_only=False)
+
+        # Restore model weights
+        # Handle both old format (raw weights) and new format (full checkpoint)
+        if 'model_state_dict' in checkpoint:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.arg.start_epoch = checkpoint['epoch']
+            self.global_step = checkpoint['global_step']
+            self.best_acc = checkpoint['best_acc']
+            self.best_acc_epoch = checkpoint['best_acc_epoch']
+            self.print_log(f'Resumed at epoch {self.arg.start_epoch}, best_acc={self.best_acc:.4f}')
+        else:
+            # Legacy: raw weights only
+            self.model.load_state_dict(checkpoint)
+            self.print_log('Loaded legacy weights (no optimizer state)')
 
     def train(self, epoch, save_model=False):
         self.model.train()
@@ -426,7 +474,20 @@ class Processor():
             state_dict = self.model.state_dict()
             weights = OrderedDict([[k.split('module.')[-1], v.cpu()] for k, v in state_dict.items()])
 
-            torch.save(weights, self.arg.model_saved_name + '-' + str(epoch+1) + '-' + str(int(self.global_step)) + '.pt')
+            checkpoint = {
+                'epoch': epoch + 1,
+                'model_state_dict': weights,
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'global_step': self.global_step,
+                'best_acc': self.best_acc,
+                'best_acc_epoch': self.best_acc_epoch,
+            }
+            ckpt_path = self.arg.model_saved_name + '-' + str(epoch+1) + '-' + str(int(self.global_step)) + '.pt'
+            torch.save(checkpoint, ckpt_path)
+            self.print_log(f'Checkpoint saved: {ckpt_path}')
+
+            #torch.save(weights, self.arg.model_saved_name + '-' + str(epoch+1) + '-' + str(int(self.global_step)) + '.pt')
+            
 
     def eval(self, epoch, save_score=False, loader_name=['test'], wrong_file=None, result_file=None):
         if wrong_file is not None:
@@ -487,6 +548,7 @@ class Processor():
                         selected_labels_3 = label[selected_indices_3]
 
                         # 将选定的批次数据添加到列表中
+                        # Add the selected batch data to the list.
                         selected_features.append(selected_features_0)
                         selected_features.append(selected_features_1)
                         selected_features.append(selected_features_2)
@@ -498,18 +560,22 @@ class Processor():
                         selected_labels.append(selected_labels_3)
 
             # 合并选定类别的特征数据和标签
+            # Merge feature data and labels of selected categories
             if selected_features and selected_labels:
                 selected_features = np.vstack([item.to('cpu').numpy() for item in selected_features])
                 selected_labels = np.hstack([item.to('cpu').numpy() for item in selected_labels])
               
                 # 使用t-SNE进行降维
-                tsne = TSNE(n_components=2, perplexity=30, n_iter=500, init='pca')
+                # Dimensionality reduction using t-SNE
+                tsne = TSNE(n_components=2, perplexity=30, max_iter=500, init='pca')
                 embedded_features = tsne.fit_transform(selected_features)
 
                 # 根据类别标签为不同类别的数据点分配不同的颜色
-                colors = np.array(['r', 'g', 'c', 'm'])  # 两个类别的颜色，与目标类别顺序对应
+                # Different colors are assigned to data points of different categories based on their category labels.
+                colors = np.array(['r', 'g', 'c', 'm'])  # 两个类别的颜色，与目标类别顺序对应 (The colors of the two categories correspond to the order of the target categories.)
 
                 # 绘制特征可视化图，每个类别使用不同的颜色
+                # Draw feature visualizations, using different colors for each category.
                 plt.figure(figsize=(8, 6))
                 for label in np.unique(selected_labels):
                     plt.scatter(embedded_features[selected_labels == label, 0],
@@ -517,6 +583,7 @@ class Processor():
                 plt.xticks([])
                 plt.yticks([])
                 # plt.show()
+                os.makedirs("test/ntu120/xsub/joint", exist_ok=True)
                 plt.savefig('test/ntu120/xsub/joint/feature_visualization.svg', format='svg')
                 plt.savefig('test/ntu120/xsub/joint/feature_visualization.pdf', format='pdf')
                 plt.close()
@@ -564,6 +631,9 @@ class Processor():
 
     def start(self):
         if self.arg.phase == 'train':
+            # Auto-resume if weights are provided
+            if self.arg.weights is not None:
+                self.resume_checkpoint(self.arg.weights)
             self.print_log('Parameters:\n{}\n'.format(str(vars(self.arg))))
             self.global_step = self.arg.start_epoch * len(self.data_loader['train']) / self.arg.batch_size
             def count_parameters(model):
@@ -579,7 +649,9 @@ class Processor():
 
             # test the best model
             weights_path = glob.glob(os.path.join(self.arg.work_dir, 'runs-'+str(self.best_acc_epoch)+'*'))[0]
-            weights = torch.load(weights_path)
+            weights = torch.load(weights_path, weights_only=False)
+            if isinstance(weights, dict) and 'model_state_dict' in weights:
+                weights = weights['model_state_dict']
             if type(self.arg.device) is list:
                 if len(self.arg.device) > 1:
                     weights = OrderedDict([['module.'+k, v.cuda(self.output_device)] for k, v in weights.items()])

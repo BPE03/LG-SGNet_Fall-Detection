@@ -1,0 +1,14 @@
+numpy
+scipy
+scikit-learn
+matplotlib
+tqdm
+pyyaml
+tensorboard
+tensorboardX
+thop
+easydict
+fvcore
+torchpack
+torch
+resource

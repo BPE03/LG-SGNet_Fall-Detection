@@ -47,6 +47,7 @@ class Feeder(Dataset):
     def load_data(self):
         # data: N C V T M
         npz_data = np.load(self.data_path)
+        #print(npz_data['x_train'].shape)
         if self.split == 'train':
             self.data = npz_data['x_train']
             self.label = np.where(npz_data['y_train'] > 0)[1]
@@ -57,6 +58,13 @@ class Feeder(Dataset):
             self.sample_name = ['test_' + str(i) for i in range(len(self.data))]
         else:
             raise NotImplementedError('data split only supports train/test')
+        # DEBUG DATASET REDUCTION
+        # print("Debug on")
+        # debug_size = 1000
+        # self.data = self.data[:debug_size]
+        # self.label = self.label[:debug_size]
+        # self.sample_name = self.sample_name[:debug_size]
+            
         N, T, _ = self.data.shape
         self.data = self.data.reshape((N, T, 2, 25, 3)).transpose(0, 4, 1, 3, 2)
 
@@ -75,7 +83,7 @@ class Feeder(Dataset):
     def __getitem__(self, index):
         data_numpy = self.data[index]
         label = self.label[index]
-        data_numpy = np.array(data_numpy)
+        #data_numpy = np.array(data_numpy)
         valid_frame_num = np.sum(data_numpy.sum(0).sum(-1).sum(-1) != 0)
         # reshape Tx(MVC) to CTVM
         data_numpy = tools.valid_crop_resize(data_numpy, valid_frame_num, self.p_interval, self.window_size)

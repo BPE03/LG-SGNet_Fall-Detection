@@ -1,0 +1,61 @@
+work_dir: ./work_dir/ntu60/yolo/full/joint
+
+seed: 42
+# feeder
+feeder: feeders.feeder_ntu_yolo.Feeder
+train_feeder_args:
+  data_path: data/ntuYOLO/full/NTU60_CS.npz
+  split: train
+  debug: False
+  random_shift: True
+  random_move: True
+  window_size: 64
+  normalization: False
+  random_rot: True
+  p_interval: [0.5, 1]
+  vel: False
+  bone: False
+
+test_feeder_args:
+  data_path: data/ntuYOLO/full/NTU60_CS.npz
+  split: test
+  window_size: 64
+  p_interval: [1, 1]
+  random_move: False
+  random_shift: False
+  normalization: False
+  vel: False
+  bone: False
+  debug: False
+
+# model
+model: model.LG-SGNet-17.Model
+model_args:
+  num_class: 2          # binary: 0=non-fall, 1=fall
+  num_point: 17
+  num_person: 1
+  graph: graph.yolo.Graph
+  graph_args:
+    labeling_mode: 'spatial'
+  in_channels: 3
+  drop_out: 0.3
+  adaptive: True
+
+#optim
+weight_decay: 0.0004
+base_lr: 0.1
+lr_decay_rate: 0.1
+step: [110, 120]
+warm_up_epoch: 5
+
+loss_args:
+  # Diisi setelah prepare_dataset_yolo17.py selesai:
+  # cat dataset/yolo17_data/full/joint/dataset_info.json | grep class_weight
+  weight: [1.0, 4.0]
+
+# training
+device: [0]
+batch_size: 16
+test_batch_size: 16
+num_epoch: 140
+nesterov: True

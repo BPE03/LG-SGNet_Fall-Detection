@@ -1,0 +1,98 @@
+# config/fall-detection-ntu/full.yaml
+# Fall Detection — BlockGCN — NTU RGB+D 25-Joint — Versi FULL
+#
+# Dataset: NTU RGB+D .skeleton → 25 joint, 2 kelas (fall / not-fall)
+# Menggunakan SEMUA sampel + class weight untuk menangani imbalance.
+#
+# PENTING: Set loss_args.weight sesuai nilai pos_weight dari dataset_info.json
+#   Contoh: jika pos_weight=4.2 → weight: [1.0, 4.2]
+#
+# Train: python main.py --config config/fall-detection-ntu/full.yaml \
+#                       --work-dir work_dir/fall_ntu25_full --device 0
+
+work_dir: work_dir/fall_ntu25_full
+phase: train
+seed: 42
+print_log: True
+save_score: True
+
+device: [0]
+
+model: model.BlockGCN.Model
+model_args:
+  num_class: 2
+  num_point: 25
+  num_person: 1
+  graph: graph.ntu_rgb_d.Graph
+  graph_args:
+    labeling_mode: spatial
+  in_channels: 3
+  drop_out: 0.3
+  adaptive: True
+  alpha: False
+  window_size: 64
+
+weights: null
+ignore_weights: []
+
+loss: CrossEntropyLoss
+loss_args:
+  # UPDATE nilai ini dari dataset/ntu25_data/full/joint/dataset_info.json
+  # Lihat field "class_weight_for_config"
+  weight: [1.0, 4.0]
+
+optimizer: SGD
+base_lr: 0.01
+momentum: 0.9
+nesterov: True
+weight_decay: 0.0004
+lr_decay_rate: 0.1
+step: [110, 120]
+warm_up_epoch: 5
+
+num_epoch: 140
+start_epoch: 0
+batch_size: 16
+test_batch_size: 16
+
+log_interval: 20
+save_interval: 1
+save_epoch: 30
+eval_interval: 1
+show_topk: [1]
+
+feeder: feeders.feeder_ntu_binary.Feeder
+num_worker: 0
+
+train_feeder_args:
+  data_path: dataset/ntu25_data/full/joint/train_data.npy
+  label_path: dataset/ntu25_data/full/joint/train_label.pkl
+  split: train
+  window_size: 64
+  p_interval: [0.5, 1.0]
+  random_move: True
+  random_shift: True
+  random_flip: True
+  random_speed: True
+  random_noise: False
+  normalization: False
+  debug: False
+  use_mmap: False
+
+test_feeder_args:
+  data_path: dataset/ntu25_data/full/joint/val_data.npy
+  label_path: dataset/ntu25_data/full/joint/val_label.pkl
+  split: val
+  window_size: 64
+  p_interval: [1.0, 1.0]
+  random_move: False
+  random_shift: False
+  random_flip: False
+  random_speed: False
+  random_noise: False
+  normalization: False
+  debug: False
+  use_mmap: False
+
+alpha: False
+

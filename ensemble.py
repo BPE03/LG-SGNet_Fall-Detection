@@ -28,24 +28,24 @@ if __name__ == "__main__":
     dataset = arg.dataset
     if 'UCLA' in arg.dataset:
         label = []
-        with open('/21085401076/data/home/sdc1/dy/CTR-GCN-main/CTR-GCN-main/data/' + 'NW-UCLA/' + '/val_label.pkl', 'rb') as f:
+        with open('data/' + 'NW-UCLA/' + '/val_label.pkl', 'rb') as f:
             data_info = pickle.load(f)
             for index in range(len(data_info)):
                 info = data_info[index]
                 label.append(int(info['label']) - 1)
     elif 'ntu120' in arg.dataset:
         if 'xsub' in arg.dataset:
-            npz_data = np.load('/21085401076/data/home/sdc1/dy/CTR-GCN-main/CTR-GCN-main/data/' + 'ntu120/' + 'NTU120_CSub.npz')
+            npz_data = np.load('data/' + 'ntu120/' + 'NTU120_CSub.npz')
             label = np.where(npz_data['y_test'] > 0)[1]
         elif 'xset' in arg.dataset:
-            npz_data = np.load('/21085401076/data/home/sdc1/dy/CTR-GCN-main/CTR-GCN-main/data/' + 'ntu120/' + 'NTU120_CSet.npz')
+            npz_data = np.load('data/' + 'ntu120/' + 'NTU120_CSet.npz')
             label = np.where(npz_data['y_test'] > 0)[1]
     elif 'ntu' in arg.dataset:
         if 'xsub' in arg.dataset:
-            npz_data = np.load('/21085401076/data/home/sdc1/dy/CTR-GCN-main/CTR-GCN-main/data/' + 'ntu/' + 'NTU60_CS.npz')
+            npz_data = np.load('data/' + 'ntu/' + 'NTU60_CS.npz')
             label = np.where(npz_data['y_test'] > 0)[1]
         elif 'xview' in arg.dataset:
-            npz_data = np.load('/21085401076/data/home/sdc1/dy/CTR-GCN-main/CTR-GCN-main/data/' + 'ntu/' + 'NTU60_CV.npz')
+            npz_data = np.load('data/' + 'ntu/' + 'NTU60_CV.npz')
             label = np.where(npz_data['y_test'] > 0)[1]
     else:
         raise NotImplementedError
@@ -66,12 +66,12 @@ if __name__ == "__main__":
     right_num = total_num = right_num_5 = 0
 
     if arg.joint_motion_dir is not None and arg.bone_motion_dir is not None:
-        # arg.alpha = [0.61, 0.78, 0.28, 0.33]  60xsub
-        # arg.alpha = [0.76, 0.77, 0.31, 0.16]   60xview
-        # arg.alpha = [0.47, 0.93, 0.34, 0.26] 120xsub 1+2
-        # arg.alpha = 0.68, 0.84, 0.29, 0.19]   120xsub
-        # arg.alpha = [0.63, 0.90, 0.35, 0.12]  120xset
-        # arg.alpha = [1.8, 2.5, 0.5, 0.2]   ucla
+        # arg.alpha = [0.61, 0.78, 0.28, 0.33]  #60xsub
+        # arg.alpha = [0.76, 0.77, 0.31, 0.16]   #60xview
+        # arg.alpha = [0.47, 0.93, 0.34, 0.26] #120xsub 1+2
+        # arg.alpha = [0.68, 0.84, 0.29, 0.19]   #120xsub
+        # arg.alpha = [0.63, 0.90, 0.35, 0.12]  #120xset
+        # arg.alpha = [1.8, 2.5, 0.5, 0.2]   #ucla
 
         # arg.alpha = [0.68, 0.72, 0.32, 0.28]
         # arg.alpha = [0.68, 0.85, 0.29, 0.18]
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     elif arg.joint_motion_dir is not None and arg.bone_motion_dir is None:
         arg.alpha = [0.6, 0.6, 0.4]
         for i in tqdm(range(len(label))):
-            l = label[:, i]
+            l = label[i]
             _, r11 = r1[i]
             _, r22 = r2[i]
             _, r33 = r3[i]
