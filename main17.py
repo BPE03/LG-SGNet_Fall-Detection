@@ -11,7 +11,7 @@ import sys
 import time
 from collections import OrderedDict
 import traceback
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, balanced_accuracy_score, roc_auc_score
 import csv
 import numpy as np
 import glob
@@ -252,6 +252,10 @@ class Processor():
         self.lr = self.arg.base_lr
         self.best_acc = 0
         self.best_acc_epoch = 0
+        self.best_f1        = 0.0
+        self.best_f1_epoch  = 0
+        self.best_bal_acc   = 0.0
+        self.best_bal_acc_epoch = 0
 
         self.model = self.model.cuda(self.output_device)
 
@@ -503,6 +507,8 @@ class Processor():
             f_r = open(result_file, 'w')
         self.model.eval()
         self.print_log('Eval epoch: {}'.format(epoch + 1))
+        best_f1_this_eval      = 0.0
+        best_bal_acc_this_eval = 0.0
         for ln in loader_name:
             loss_value = []
             score_frag = []
@@ -631,10 +637,45 @@ class Processor():
             list_diag = np.diag(confusion)
             list_raw_sum = np.sum(confusion, axis=1)
             each_acc = list_diag / list_raw_sum
+
+            if confusion.shape == (2, 2):
+                tn, fp, fn, tp = confusion.ravel()
+                prec   = tp / max(tp + fp, 1)
+                rec    = tp / max(tp + fn, 1)
+                spec   = tn / max(tn + fp, 1)
+                f1     = 2 * prec * rec / max(prec + rec, 1e-9)
+                best_f1_this_eval = max(best_f1_this_eval, f1)
+
+                bal_acc = balanced_accuracy_score(label_list, pred_list)
+                best_bal_acc_this_eval = max(best_bal_acc_this_eval, bal_acc)
+                score_prob = score[:, 1]  # probabilitas kelas fall
+                try:
+                    auc = roc_auc_score(label_list, score_prob)
+                except ValueError:
+                    auc = float('nan')
+
+                self.print_log('\tBalanced Accuracy: {:.2f}%'.format(bal_acc * 100))
+                self.print_log('\tPrecision    : {:.2f}%'.format(prec * 100))
+                self.print_log('\tSensitivity (Fall Recall)    : {:.2f}%'.format(rec  * 100))
+                self.print_log('\tSpecificity (Non-Fall Recall): {:.2f}%'.format(spec * 100))
+                self.print_log('\tF1 Score     : {:.2f}%'.format(f1 * 100))
+                self.print_log('\tTP={:4d}  TN={:4d}  FP={:4d}  FN={:4d}'.format(
+                    int(tp), int(tn), int(fp), int(fn)))
+                self.print_log('\tAUC-ROC: {:.4f}'.format(auc))
+
+                if self.arg.phase == 'train':
+                    self.val_writer.add_scalar('precision',        prec,    self.global_step)
+                    self.val_writer.add_scalar('recall',           rec,     self.global_step)
+                    self.val_writer.add_scalar('f1',               f1,      self.global_step)
+                    self.val_writer.add_scalar('balanced_acc',     bal_acc, self.global_step)
+                    self.val_writer.add_scalar('auc_roc',          auc,     self.global_step)
+
             with open('{}/epoch{}_{}_each_class_acc.csv'.format(self.arg.work_dir, epoch + 1, ln), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(each_acc)
                 writer.writerows(confusion)
+
+            return best_f1_this_eval, best_bal_acc_this_eval
 
     def start(self):
         if self.arg.phase == 'train':
@@ -652,7 +693,14 @@ class Processor():
 
                 self.train(epoch, save_model=save_model)
 
-                self.eval(epoch, save_score=self.arg.save_score, loader_name=['test'])
+                epoch_f1, epoch_bal_acc = self.eval(epoch, save_score=self.arg.save_score, loader_name=['test'])
+
+                if epoch_f1 > self.best_f1:
+                    self.best_f1       = epoch_f1
+                    self.best_f1_epoch = epoch + 1
+                if epoch_bal_acc > self.best_bal_acc:
+                    self.best_bal_acc       = epoch_bal_acc
+                    self.best_bal_acc_epoch = epoch + 1
 
             # test the best model
             weights_path = glob.glob(os.path.join(self.arg.work_dir, 'runs-'+str(self.best_acc_epoch)+'*'))[0]
@@ -672,7 +720,11 @@ class Processor():
 
 
             num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            self.print_log('Best Bal Acc : {:.4f}  (epoch {})'.format(
+                self.best_bal_acc, self.best_bal_acc_epoch))
             self.print_log(f'Best accuracy: {self.best_acc}')
+            self.print_log('Best F1      : {:.4f}  (epoch {})'.format(
+                self.best_f1, self.best_f1_epoch))
             self.print_log(f'Epoch number: {self.best_acc_epoch}')
             self.print_log(f'Model name: {self.arg.work_dir}')
             self.print_log(f'Model total number of params: {num_params}')

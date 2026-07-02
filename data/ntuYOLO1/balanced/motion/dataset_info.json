@@ -1,0 +1,43 @@
+{
+  "version": "balanced/motion",
+  "source": "YOLO11n-pose extraction from NTU RGB+D video",
+  "fall_classes": [
+    43
+  ],
+  "not_fall_classes": [
+    8,
+    9,
+    27,
+    42
+  ],
+  "num_class": 2,
+  "classes": {
+    "0": "not_fall",
+    "1": "fall"
+  },
+  "num_joints": 17,
+  "channels": 3,
+  "channel_names": [
+    "x_norm",
+    "y_norm",
+    "confidence"
+  ],
+  "normalization": "hip_center_shoulder_scale",
+  "max_frames": 150,
+  "num_person": 1,
+  "train": {
+    "total": 1356,
+    "not_fall": 678,
+    "fall": 678
+  },
+  "val": {
+    "total": 1107,
+    "not_fall": 889,
+    "fall": 218
+  },
+  "pos_weight": 1.0,
+  "class_weight_for_config": [
+    1.0,
+    1.0
+  ]
+}

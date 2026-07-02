@@ -7,8 +7,12 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 
-data/
-work_dir/
+data/nturgbd_raw/
+*.npz
+*.npy
+*.skeleton
+*.txt
+work_dir*/
 .venv/
 *.pt
 test/

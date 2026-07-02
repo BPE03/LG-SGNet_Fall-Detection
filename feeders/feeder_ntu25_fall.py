@@ -5,7 +5,11 @@ from torch.utils.data import Dataset
 from feeders import tools
 
 # Pasangan joint kiri-kanan untuk flip augmentasi (COCO format)
-FLIP_PAIRS = [(1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (11, 12), (13, 14), (15, 16)]
+FLIP_PAIRS = [
+    (4, 8), (5, 9), (6, 10), (7, 11),
+    (12, 16), (13, 17), (14, 18), (15, 19),
+    (21, 23), (22, 24),
+]
 
 class Feeder(Dataset):
     def __init__(self, data_path, label_path=None, p_interval=1, split='train', random_choose=False, random_shift=False,
@@ -57,7 +61,6 @@ class Feeder(Dataset):
         else:
             npz_data = np.load(self.data_path)
         # print(npz_data['x_train'].shape)
-        #print(npz_data['x_train'].shape)
         if self.split == 'train':
             self.data = npz_data['x_train']
             self.label = np.where(npz_data['y_train'] > 0)[1]
@@ -76,13 +79,31 @@ class Feeder(Dataset):
         # self.sample_name = self.sample_name[:debug_size]
             
         N, T, _ = self.data.shape
-        self.data = self.data.reshape((N, T, 1, 17, 3)).transpose(0, 4, 1, 3, 2)
+        self.data = self.data.reshape((N, T, 1, 25, 3)).transpose(0, 4, 1, 3, 2)
+
+        # Drop samples whose every frame is zero (corrupted source data)
+        # valid_mask = self.data.reshape(N, -1).any(axis=1)
+        # if not valid_mask.all():
+        #     n_dropped = int((~valid_mask).sum())
+        #     print(f'[Feeder] Dropping {n_dropped} all-zero sample(s) from {self.split} split.')
+        #     self.data = self.data[valid_mask]
+        #     self.label = self.label[valid_mask]
+        #     self.sample_name = [s for s, v in zip(self.sample_name, valid_mask) if v]
 
     def get_mean_map(self):
         data = self.data
         N, C, T, V, M = data.shape
         self.mean_map = data.mean(axis=2, keepdims=True).mean(axis=4, keepdims=True).mean(axis=0)
         self.std_map = data.transpose((0, 2, 4, 1, 3)).reshape((N * T * M, C * V)).std(axis=0).reshape((C, 1, V, 1))
+
+    def _count_valid_frames(self, x):
+        """
+        Hitung frame yang punya data (bukan semua-nol).
+        NTU: frame kosong = semua koordinat nol karena padding.
+        """
+        spatial = x[:, :, :, 0]          # (C, T, V)
+        valid = int((spatial != 0).any(axis=(0, 2)).sum())
+        return max(valid, 1)
 
     def __len__(self):
         return len(self.label)
@@ -95,7 +116,8 @@ class Feeder(Dataset):
         # print(f"Original shape: {data_numpy.shape}")  # (C, T, V, M)
         label = self.label[index]
         #data_numpy = np.array(data_numpy)
-        valid_frame_num = np.sum(data_numpy.sum(0).sum(-1).sum(-1) != 0)
+        #valid_frame_num = np.sum(data_numpy.sum(0).sum(-1).sum(-1) != 0)
+        valid_frame_num = self._count_valid_frames(data_numpy)
         # reshape Tx(MVC) to CTVM
         data_numpy = tools.valid_crop_resize(data_numpy, valid_frame_num, self.p_interval, self.window_size)
         if self.random_rot:
@@ -111,10 +133,10 @@ class Feeder(Dataset):
         if self.random_noise:
             data_numpy = self._add_noise(data_numpy)
         if self.bone:
-            from .bone_pairs import yolo_pairs
+            from .bone_pairs import ntu_pairs
             bone_data_numpy = np.zeros_like(data_numpy)
-            for v1, v2 in yolo_pairs:
-                bone_data_numpy[:, :, v1] = data_numpy[:, :, v1] - data_numpy[:, :, v2]
+            for v1, v2 in ntu_pairs:
+                bone_data_numpy[:, :, v1 - 1] = data_numpy[:, :, v1 - 1] - data_numpy[:, :, v2 - 1]
             data_numpy = bone_data_numpy
         if self.vel:
             data_numpy[:, :-1] = data_numpy[:, 1:] - data_numpy[:, :-1]
