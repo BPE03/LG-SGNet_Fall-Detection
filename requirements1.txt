@@ -12,3 +12,5 @@ fvcore
 torchpack
 torch
 resource
+opencv-python
+ultralytics
