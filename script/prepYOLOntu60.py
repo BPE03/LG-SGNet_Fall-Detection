@@ -56,8 +56,10 @@ import numpy as np
 # CS / CV split  (identical to seq_transformation.get_indices)
 # ---------------------------------------------------------------------------
 
-CS_TRAIN_IDS = {1, 2, 4, 5, 8, 9, 13, 14, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38}
-CS_TEST_IDS  = {3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40}
+# CS_TRAIN_IDS = {1, 2, 4, 5, 8, 9, 13, 14, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38}
+# CS_TEST_IDS  = {3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40}
+CS_TRAIN_IDS = {1, 2, 4, 5, 8, 9, 11, 13, 14, 15, 16, 17, 18}
+CS_TEST_IDS  = {3, 6, 7, 10, 12, 19, 20}
 CV_TRAIN_IDS = {2, 3}
 CV_TEST_ID   = 1
 
@@ -92,11 +94,16 @@ def load_npy(path):
 
 
 def align_frames(skes_joints, max_frames):
-    """Zero-pad all sequences to max_frames."""
+    """Center-crop or zero-pad each sequence to exactly max_frames."""
     n = len(skes_joints)
     out = np.zeros((n, max_frames, 51), dtype=np.float32)
     for i, joints in enumerate(skes_joints):
-        out[i, :len(joints)] = joints
+        T = len(joints)
+        if T >= max_frames:
+            start = (T - max_frames) // 2
+            out[i] = joints[start:start + max_frames]
+        else:
+            out[i, :T] = joints
     return out
 
 
@@ -111,22 +118,26 @@ def one_hot(labels, num_classes=2):
 # Main
 # ---------------------------------------------------------------------------
 
-def balance_names(names, file_index, seed):
+def balance_train_mask(train_mask, labels, seed):
     """
-    Subsample not_fall names so the total not_fall count equals the fall count.
-    Sampling is done before the train/test split so both sets end up balanced.
+    Undersample not_fall in the train split only so train is 50/50.
+    Test split is left untouched (realistic imbalance preserved).
     """
-    fall_names     = [n for n in names if file_index[n] == 1]
-    not_fall_names = [n for n in names if file_index[n] == 0]
-    n_fall         = len(fall_names)
+    train_indices   = np.where(train_mask)[0]
+    train_labels    = labels[train_indices]
+    fall_idx        = train_indices[train_labels == 1]
+    not_fall_idx    = train_indices[train_labels == 0]
+    n_fall          = len(fall_idx)
 
     rng = np.random.default_rng(seed)
-    sampled_not_fall = rng.choice(not_fall_names, size=n_fall, replace=False).tolist()
+    sampled_nf = rng.choice(not_fall_idx, size=n_fall, replace=False)
 
-    balanced = fall_names + sampled_not_fall
-    print('Balanced: kept %d fall + %d not_fall (dropped %d not_fall sequences)' % (
-        n_fall, n_fall, len(not_fall_names) - n_fall))
-    return balanced
+    new_mask = np.zeros(len(labels), dtype=bool)
+    new_mask[fall_idx]    = True
+    new_mask[sampled_nf]  = True
+    print('Balanced train: kept %d fall + %d not_fall (dropped %d not_fall sequences)' % (
+        n_fall, n_fall, len(not_fall_idx) - n_fall))
+    return new_mask
 
 
 def main(args):
@@ -138,9 +149,6 @@ def main(args):
     names = list(file_index.keys())
     print('Total sequences in index: %d' % len(names))
 
-    if args.mode == 'balanced':
-        names = balance_names(names, file_index, args.seed)
-
     n = len(names)
     print('Sequences to process: %d' % n)
 
@@ -148,7 +156,6 @@ def main(args):
     labels      = np.zeros(n, dtype=int)
     performers  = np.zeros(n, dtype=int)
     cameras     = np.zeros(n, dtype=int)
-    frames_cnt  = np.zeros(n, dtype=int)
     missing     = []
 
     for idx, name in enumerate(names):
@@ -160,16 +167,14 @@ def main(args):
             print('  WARNING: missing %s' % path)
             missing.append(name)
             skes_joints.append(np.zeros((1, 51), dtype=np.float32))
-            frames_cnt[idx] = 1
         else:
             joints = load_npy(path)
             skes_joints.append(joints)
-            frames_cnt[idx] = len(joints)
 
-        meta           = parse_name(name)
-        labels[idx]    = label
+        meta            = parse_name(name)
+        labels[idx]     = label
         performers[idx] = meta['performer']
-        cameras[idx]   = meta['camera']
+        cameras[idx]    = meta['camera']
 
         if (idx + 1) % 500 == 0:
             print('  Loaded %d / %d' % (idx + 1, n))
@@ -179,13 +184,14 @@ def main(args):
         for m in missing:
             print('    ' + m)
 
-    max_frames = int(frames_cnt.max())
-    print('Aligning to max_frames=%d ...' % max_frames)
-    aligned = align_frames(skes_joints, max_frames)
+    print('Aligning to max_frames=%d (center-crop / zero-pad) ...' % args.max_frames)
+    aligned = align_frames(skes_joints, args.max_frames)
 
     # --- Save splits ---
     for evaluation in ['CS', 'CV']:
         train_mask, test_mask = get_split_mask(performers, cameras, evaluation)
+        if args.mode == 'balanced':
+            train_mask = balance_train_mask(train_mask, labels, args.seed)
         train_x = aligned[train_mask]
         test_x  = aligned[test_mask]
         train_y = one_hot(labels[train_mask])
@@ -229,8 +235,10 @@ if __name__ == '__main__':
                         help='Path to file_index.json')
     parser.add_argument('--save_dir',   default='./',
                         help='Output directory for .npz files and dataset_info.json')
+    parser.add_argument('--max_frames',  type=int, default=150,
+                        help='Fixed sequence length; longer sequences are center-cropped, shorter are zero-padded (default: 150)')
     parser.add_argument('--mode',       default='full', choices=['full', 'balanced'],
-                        help='"full" uses all data; "balanced" subsamples not_fall to match fall count')
+                        help='"full" uses all data; "balanced" undersamples not_fall in train only')
     parser.add_argument('--seed',       type=int, default=42,
                         help='Random seed for balanced subsampling (default: 42)')
     main(parser.parse_args())
