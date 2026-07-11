@@ -279,9 +279,9 @@ def make_version(out_dir: Path, train_s, val_s, max_frames, version_name, transf
 def main():
     ap = argparse.ArgumentParser(
         description="Prepare YOLO17 binary fall dataset dari skeleton .npy")
-    ap.add_argument("--skeleton_dir", default="dataset/ntu_skeleton",
+    ap.add_argument("--skeleton_dir", default="data/nturgbd_raw_yolo",
                     help="Direktori berisi fall/ dan not_fall/ subfolder")
-    ap.add_argument("--out_dir",      default="dataset/yolo17_data")
+    ap.add_argument("--out_dir",      default="data/ntuYOLO1")
     ap.add_argument("--max_frames",   type=int, default=150)
     ap.add_argument("--val_split",    type=float, default=0.2)
     ap.add_argument("--split_method", default="cross_subject",
@@ -289,7 +289,7 @@ def main():
                     help="'random' = stratified 80/20 | "
                          "'cross_subject' = berdasarkan P-ID (NTU protocol)")
     ap.add_argument("--seed",         type=int, default=42)
-    ap.add_argument("--npz_name",     default="dataset.npz",
+    ap.add_argument("--npz_name",     default="NTU60_CS.npz",
                     help="Output filename for the converted NPZ file")
     args = ap.parse_args()
 
