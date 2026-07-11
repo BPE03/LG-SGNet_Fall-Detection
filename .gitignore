@@ -16,3 +16,4 @@ work_dir*/
 .venv/
 *.pt
 test/
+*cache*

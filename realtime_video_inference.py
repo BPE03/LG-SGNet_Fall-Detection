@@ -11,8 +11,8 @@ Cara pakai (dari folder scripts/):
     python realtime_video_inference.py --video path/ke/video.mp4
     python realtime_video_inference.py --video video.mp4 --threshold 0.4 --step 10
     
-    python realtime_video_inference.py --video ../dataset/urfd_videos/merged_output.mp4 --device cuda:0 --max-speed
-    python realtime_video_inference.py --video ../dataset/ntu_videos/merged_output.mp4 --device cuda:0 --max-speed
+    python scripts/realtime_video_inference.py --video dataset/urfd_videos/merged_output.mp4 --device cuda:0 --max-speed
+    python scripts/realtime_video_inference.py --video dataset/ntu_videos/merged_output.mp4 --device cuda:0 --max-speed
 
 Kontrol keyboard:
     q = keluar
@@ -34,21 +34,24 @@ import torch
 import yaml
 
 # ── Path setup ─────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 # # ── Default konfigurasi FULL ────────────────────────────────────────────────────────
-DEFAULT_WEIGHTS   = "best-model-33.pt"
-DEFAULT_CONFIG    = "config/yolo17/full/ntu-cs/default.yaml"
+DEFAULT_WEIGHTS   = "weights_new/04_17ful/runs-38-4142.pt"
+DEFAULT_CONFIG    = "weights_new/04_17ful/config.yaml"
 
 # ── Default konfigurasi BALANCED  ────────────────────────────────────────────────────────
-# DEFAULT_WEIGHTS   = "../weights/28_(17bal)/runs-20-1780.pt"
-# DEFAULT_CONFIG    = "../config/fall-detection-yolo/balanced.yaml"
+# DEFAULT_WEIGHTS   = "weights_new/01_17bal/runs-25-1050.pt"
+# DEFAULT_CONFIG    = "config/fall-detection-yolo/balanced.yaml"
+
+DEFAULT_MODEL     = None  # None = pakai dari config; override: "model.BlockGCN_SE.Model"
 
 DEFAULT_YOLO      = "yolo11n-pose.pt"
 DEFAULT_THRESHOLD = 0.5
-DEFAULT_WINDOW    = 30       # frame yang dilihat model sekaligus
+DEFAULT_WINDOW    = 64       # harus sama dengan window_size di config training
 DEFAULT_STEP      = 15       # prediksi update setiap N frame baru
+DEFAULT_SMOOTH_ALPHA = 0.4  # EMA keypoint smoothing (0.1=smooth, 1.0=raw)
 DEFAULT_MAX_W     = 1280     # lebar display
 DEFAULT_MAX_H     = 720      # tinggi display
 DEFAULT_YOLO_IMGSZ = 640     # resolusi input YOLO; kecil = lebih cepat
@@ -82,8 +85,9 @@ def import_class(name):
 
 # ── Load model ─────────────────────────────────────────────────────────────────
 
-def load_model(cfg, weights_path, device):
-    Model   = import_class(cfg["model"])
+def load_model(cfg, weights_path, device, model_override=None):
+    model_class = model_override if model_override else cfg["model"]
+    Model   = import_class(model_class)
     model   = Model(**cfg["model_args"])
     weights = torch.load(weights_path, map_location="cpu", weights_only=False)
     weights = {k.replace("module.", ""): v for k, v in weights.items()}
@@ -93,6 +97,9 @@ def load_model(cfg, weights_path, device):
 
 
 # ── Normalisasi skeleton ───────────────────────────────────────────────────────
+
+
+
 
 def normalize_skeleton_sequence(buffer_np):
     """
@@ -242,16 +249,30 @@ def draw_status_panel(frame, pred, p_fall, p_not_fall,
         cv2.rectangle(frame, (0, prog_y), (w, prog_y + 4), COLOR_GRAY, -1)
         cv2.rectangle(frame, (0, prog_y), (prog_w, prog_y + 4), COLOR_BLUE, -1)
 
-    # Info kanan atas
+    # Info kiri-bawah (di atas panel status), kotak gelap agar terbaca di bg putih
     info_lines = [
         f"FPS: {fps:.1f}",
         f"{'[PAUSE]' if paused else f'{frame_count}/{total_frames}'}",
         f"Thr: {threshold:.2f}",
         f"Step: {step_size}",
     ]
+    line_h   = 22
+    pad      = 8
+    box_w    = 150
+    box_h    = line_h * len(info_lines) + pad
+    box_x    = 10
+    box_y2   = h - panel_h - 28         # naikkan, beri jarak dari panel status
+    box_y1   = box_y2 - box_h
+
+    ov = frame.copy()
+    cv2.rectangle(ov, (box_x, box_y1), (box_x + box_w, box_y2), COLOR_BLACK, -1)
+    cv2.addWeighted(ov, 0.6, frame, 0.4, 0, frame)
+    cv2.rectangle(frame, (box_x, box_y1), (box_x + box_w, box_y2), COLOR_WHITE, 1)
+
     for i, line in enumerate(info_lines):
-        cv2.putText(frame, line, (w - 140, 25 + i * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_WHITE, 1)
+        ty = box_y1 + pad + line_h * i + 12
+        cv2.putText(frame, line, (box_x + 8, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_WHITE, 1, cv2.LINE_AA)
 
     return frame
 
@@ -283,6 +304,12 @@ def main():
     ap.add_argument("--height",    type=int,   default=DEFAULT_MAX_H)
     ap.add_argument("--no-loop",   action="store_true",
                     help="Jangan loop video saat selesai (default: loop)")
+    ap.add_argument("--model",     default=DEFAULT_MODEL,
+                    help="Override model class, e.g. model.BlockGCN_SE.Model")
+    ap.add_argument("--smooth-alpha", type=float, default=DEFAULT_SMOOTH_ALPHA,
+                    help="EMA keypoint smoothing 0.1-1.0 (default 0.4, makin kecil makin smooth)")
+    ap.add_argument("--shotdir", default="paper_shots",
+                    help="Folder simpan screenshot")
     args = ap.parse_args()
 
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -320,7 +347,7 @@ def main():
         cfg = yaml.safe_load(f)
 
     print(f"Memuat model dari: {args.weights}")
-    model = load_model(cfg, args.weights, args.device)
+    model = load_model(cfg, args.weights, args.device, model_override=args.model)
     print(f"Model siap di: {args.device}")
 
     # ── Buka video ─────────────────────────────────────────────────────────────
@@ -352,6 +379,7 @@ def main():
 
     # ── State variabel ─────────────────────────────────────────────────────────
     skeleton_buffer = collections.deque(maxlen=args.window)
+    smoothed_kpts   = None
 
     last_pred       = 0
     last_p_fall     = 0.0
@@ -360,6 +388,14 @@ def main():
     frame_count    = 0
     screenshot_num = 0
     paused         = False
+
+    shotdir = ROOT / args.shotdir
+    shotdir.mkdir(parents=True, exist_ok=True)
+    WINDOW = "Fall Detection BlockGCN + YOLO11-pose"
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW, args.width, args.height)
+
+    latest = {"frame": None}
 
     fps_times = collections.deque(maxlen=30)
 
@@ -381,8 +417,8 @@ def main():
             elif key == ord(' '):
                 paused = False
             elif key == ord('s'):
-                ss_path = f"screenshot_{screenshot_num:03d}.jpg"
-                cv2.imwrite(ss_path, frame)
+                ss_path = shotdir / f"manual_{screenshot_num:03d}_f{frame_count}.jpg"
+                cv2.imwrite(str(ss_path), frame)
                 screenshot_num += 1
                 print(f"Screenshot disimpan: {ss_path}")
             continue
@@ -399,6 +435,7 @@ def main():
                 print("[INFO] Video loop ulang, reset buffer.")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 skeleton_buffer.clear()
+                smoothed_kpts   = None
                 last_pred       = 0
                 last_p_fall     = 0.0
                 last_p_not_fall = 1.0
@@ -432,12 +469,25 @@ def main():
             if len(kps) > 0:
                 conf_all = kps.conf.cpu().numpy()
                 best     = int(conf_all.mean(axis=1).argmax())
-                kf_xy    = kps.xy.cpu().numpy()[best]
+                raw_xy   = kps.xy.cpu().numpy()[best]
                 kf_conf  = conf_all[best]
+                # EMA smoothing: kurangi jitter per-joint tanpa lag besar
+                if smoothed_kpts is None:
+                    smoothed_kpts = raw_xy.copy()
+                else:
+                    high_conf = kf_conf > 0.3
+                    smoothed_kpts[high_conf] = (
+                        args.smooth_alpha * raw_xy[high_conf] +
+                        (1 - args.smooth_alpha) * smoothed_kpts[high_conf]
+                    )
+                kf_xy           = raw_xy   # raw untuk display (tidak lag)
                 person_detected = True
+        if not person_detected:
+            smoothed_kpts = None
 
         kf = np.zeros((NUM_JOINTS, 3), np.float32)
-        kf[:, :2] = kf_xy
+        # Buffer inference pakai smoothed; display pakai raw
+        kf[:, :2] = smoothed_kpts if smoothed_kpts is not None else kf_xy
         kf[:, 2]  = kf_conf
         skeleton_buffer.append(kf)
 
@@ -449,18 +499,26 @@ def main():
         if (len(skeleton_buffer) == args.window and
                 frame_count % args.step == 0):
 
-            window_np   = np.array(skeleton_buffer)
-            window_norm = normalize_skeleton_sequence(window_np)
+            window_np    = np.array(skeleton_buffer)
 
-            try:
-                pred, p_fall, p_nf = run_inference(
-                    model, cfg, window_norm,
-                    args.device, args.threshold)
-                last_pred       = pred
-                last_p_fall     = p_fall
-                last_p_not_fall = p_nf
-            except Exception as e:
-                print(f"[WARN] Inference error: {e}")
+            valid_frames = int(((window_np[:, :, 2] > 0.3).sum(axis=1) >= 5).sum())
+            if valid_frames < args.window // 4:
+                last_pred       = 0
+                last_p_fall     = 0.0
+                last_p_not_fall = 1.0
+            else:
+                window_norm = normalize_skeleton_sequence(window_np)
+
+                try:
+                    _, p_fall, _ = run_inference(
+                        model, cfg, window_norm,
+                        args.device, args.threshold)
+                    # Label langsung ikut prob: p_fall >= threshold => FALL
+                    last_pred       = 1 if p_fall >= args.threshold else 0
+                    last_p_fall     = p_fall
+                    last_p_not_fall = 1.0 - p_fall
+                except Exception as e:
+                    print(f"[WARN] Inference error: {e}")
 
         # ── 4. Gambar panel status ─────────────────────────────────────────────
         frame = draw_status_panel(
@@ -478,6 +536,8 @@ def main():
             paused       = paused,
         )
 
+        latest["frame"] = frame      # simpan frame full-res utk klik-screenshot
+
         # ── Resize frame agar tidak kepotong (Display only) ────────────────────
         h, w = frame.shape[:2]
 
@@ -488,7 +548,7 @@ def main():
         frame_resized = cv2.resize(frame, (new_w, new_h))
 
         # ── 5. Tampilkan ───────────────────────────────────────────────────────
-        cv2.imshow("Fall Detection BlockGCN + YOLO11n-pose", frame_resized)
+        cv2.imshow(WINDOW, frame_resized)
 
         # ── 6. Handle keyboard ─────────────────────────────────────────────────
         key = cv2.waitKey(frame_delay) & 0xFF
@@ -502,13 +562,14 @@ def main():
             print("[PAUSE]")
 
         elif key == ord('s'):
-            ss_path = f"screenshot_{screenshot_num:03d}.jpg"
-            cv2.imwrite(ss_path, frame)
+            ss_path = shotdir / f"manual_{screenshot_num:03d}_f{frame_count}.jpg"
+            cv2.imwrite(str(ss_path), frame)
             screenshot_num += 1
             print(f"Screenshot disimpan: {ss_path}")
 
         elif key == ord('r'):
             skeleton_buffer.clear()
+            smoothed_kpts = None
             last_pred       = 0
             last_p_fall     = 0.0
             last_p_not_fall = 1.0
