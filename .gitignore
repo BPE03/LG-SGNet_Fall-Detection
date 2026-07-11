@@ -12,6 +12,7 @@ data/nturgbd_raw/
 *.npy
 *.skeleton
 *.txt
+*.pyc
 work_dir*/
 .venv/
 *.pt

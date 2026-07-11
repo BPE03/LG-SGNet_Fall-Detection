@@ -78,48 +78,6 @@ def load_model(checkpoint_path: str, num_class: int = 2, device: torch.device = 
 
 
 # ── Preprocessing ──────────────────────────────────────────────────────────────
-def normalize_coco_keypoints(keypoints: np.ndarray) -> np.ndarray:
-    """
-    Normalize YOLO11-pose 17 COCO keypoints for model input.
-
-    keypoints : np.ndarray of shape (17, 3) — (x_px, y_px, confidence)
-                in image pixel coordinates from YOLO.
-    Returns   : np.ndarray of shape (17, 3) centered and normalized.
-
-    Centers on the midpoint of hips (joints 11 and 12), normalizes by bounding box diagonal.
-    """
-    joints = np.zeros((NUM_JOINTS, NUM_COORDS), dtype=np.float32)
-
-    # Use keypoints directly, only for joints with confidence > 0.3
-    for i in range(17):
-        x_px, y_px, conf = keypoints[i]
-        if conf > 0.3:
-            # x=right, flip y so up is positive (image y goes downward)
-            # z: estimated from vertical pixel position — lower body = further away.
-            joints[i] = [x_px, -y_px, 0.0]
-
-    # ── Center on midpoint of hips (joints 11 and 12) ────────────────────
-    if joints[11].any() and joints[12].any():
-        center = (joints[11] + joints[12]) / 2
-    else:
-        # Fallback to centroid of all detected joints
-        active_mask = np.any(joints != 0, axis=1)
-        if active_mask.sum() > 0:
-            center = joints[active_mask].mean(axis=0)
-        else:
-            center = np.zeros(3, dtype=np.float32)
-    joints -= center
-
-    # ── Normalize to body scale ──────────────────────────────────────────
-    active = joints[np.any(joints != 0, axis=1)]
-    if len(active) > 1:
-        bbox_diag = np.linalg.norm(active.max(axis=0) - active.min(axis=0))
-        if bbox_diag > 1e-3:
-            joints /= bbox_diag
-            joints *= 1.7   # rescale to approximate metric range
-
-    return joints
-
 def normalize_skeleton_sequence(buffer_np):
     sk = buffer_np.copy()
     xy = sk[:, :, :2]
@@ -153,53 +111,6 @@ def build_input_tensor(window: np.ndarray) -> torch.Tensor:
 def softmax(x: np.ndarray) -> np.ndarray:
     e = np.exp(x - x.max())
     return e / e.sum()
-
-def build_weighted_window(buffer: deque, window_size: int = 64, recent_weight: int = 3) -> np.ndarray:
-    """
-    Build a window of `window_size` frames that oversamples recent frames.
-    
-    recent_weight: how many times the most recent half is repeated
-                   relative to the older half.
-    
-    Example with window_size=64, recent_weight=3:
-      - older half  gets 1 slot each  → ~16 frames
-      - recent half gets 3 slots each → ~16 frames × 3 = 48 slots
-      - total = 16 + 48 = 64
-    """
-    frames = list(buffer)  # oldest → newest
-    n = len(frames)
-    
-    # Split into older and recent halves
-    mid = n // 2
-    older  = frames[:mid]
-    recent = frames[mid:]
-    
-    # How many older frames fit given recent takes `recent_weight` slots each
-    # older_count + recent_count * recent_weight = window_size
-    recent_count = len(recent)
-    older_slots  = window_size - recent_count * recent_weight
-    
-    if older_slots <= 0:
-        # recent half alone already fills the window — just tile it
-        indices  = np.linspace(0, recent_count - 1, window_size, dtype=int)
-        window   = np.stack([recent[i] for i in indices])
-    else:
-        # Subsample older frames to fit in older_slots
-        if len(older) > 0:
-            indices  = np.linspace(0, len(older) - 1, older_slots, dtype=int)
-            older_sampled = [older[i] for i in indices]
-        else:
-            older_sampled = []
-        
-        # Repeat each recent frame `recent_weight` times
-        recent_repeated = []
-        for f in recent:
-            recent_repeated.extend([f] * recent_weight)
-        
-        combined = older_sampled + recent_repeated
-        window   = np.stack(combined[:window_size])
-    
-    return window  # (64, 17, 3)
 
 # ── Inference ──────────────────────────────────────────────────────────────────
 @torch.no_grad()
@@ -456,7 +367,6 @@ def main():
         # Keypoint smoothing — exponential moving average over last N YOLO frames
         SMOOTH_ALPHA      = args.smooth_alpha  # lower = smoother but more lag (0.1–1.0)
         smoothed_kpts     = None          # (17, 3) smoothed keypoints in small-frame coords
-        smoothed_kpts_orig = None         # (17, 3) smoothed keypoints in original-frame coords
         nonlocal pose_result
         nonlocal vote_buffer, vote_lock
         nonlocal missing_frames
@@ -510,11 +420,6 @@ def main():
                     keypoints_orig = keypoints.copy()
                     keypoints_orig[:, 0] /= scale_w   # x
                     keypoints_orig[:, 1] /= scale_w   # y
-
-                    # joints = normalize_coco_keypoints(keypoints)  # use small coords (normalized anyway)
-                    # with buffer_lock:
-                    #     skeleton_buffer.append(joints)
-                    #     buf_len = len(skeleton_buffer)
 
                     kf = np.zeros((NUM_JOINTS, 3), np.float32)
                     kf[:, :2] = keypoints_orig[:, :2]
@@ -590,7 +495,6 @@ def main():
                 if len(skeleton_buffer) < WINDOW_SIZE:
                     continue
                 window = np.stack(list(skeleton_buffer), axis=0)
-                #window = build_weighted_window(skeleton_buffer, window_size=WINDOW_SIZE, recent_weight=2)
 
             result = run_inference(model, window, device)
 
