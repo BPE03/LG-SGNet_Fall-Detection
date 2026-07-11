@@ -187,6 +187,10 @@ def draw_overlay(frame: np.ndarray, result: dict, fps: float, skeleton_detected:
     cv2.putText(frame, f"FPS: {fps:.1f}", (10, 35),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
 
+    # Resolution
+    cv2.putText(frame, f"Resolution: {w}x{h}", (w - 240, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+
     # Skeleton status
     skel_color = (0, 255, 0) if skeleton_detected else (0, 100, 255)
     skel_text  = "Skeleton OK" if skeleton_detected else "No skeleton"
@@ -258,6 +262,8 @@ def main():
     parser.add_argument('--save-video', default='',       help='Path to save output video (optional)')
     parser.add_argument('--pose-model', default='yolo11n-pose.pt',
                         help='Path to YOLO pose model (default: yolo11n-pose.pt)')
+    parser.add_argument('--display-width', default=0, type=int,
+                        help='Max width for displayed window (0 = original, maintains aspect ratio)')
     args = parser.parse_args()
 
     global WINDOW_SIZE
@@ -602,6 +608,12 @@ def main():
 
             if writer:
                 writer.write(display_frame)
+
+            # Resize for display if --display-width is specified
+            if args.display_width > 0 and display_frame.shape[1] > args.display_width:
+                scale = args.display_width / display_frame.shape[1]
+                new_h = int(display_frame.shape[0] * scale)
+                display_frame = cv2.resize(display_frame, (args.display_width, new_h))
 
             cv2.imshow("LG-SGNet Fall Detection", display_frame)
             if str(args.source).endswith('.mp4'):
