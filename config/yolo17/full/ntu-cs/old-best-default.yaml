@@ -1,0 +1,67 @@
+# command line: main17.py --config config/yolo17/full/ntu-cs/default.yaml --num-worker 0 --save-epoch 1
+
+base_lr: 0.1
+batch_size: 16
+config: config/yolo17/full/ntu-cs/default.yaml
+debug: false
+device: [0]
+eval_interval: 5
+feeder: feeders.feeder_ntu_yolo.Feeder
+ignore_weights: []
+log_interval: 100
+loss_args:
+  weight: [1.0, 4.0]
+lr_decay_rate: 0.1
+model: model.LG-SGNet-17.Model
+model_args:
+  adaptive: true
+  drop_out: 0.3
+  graph: graph.yolo.Graph
+  graph_args:
+    labeling_mode: spatial
+  in_channels: 3
+  num_class: 2
+  num_person: 1
+  num_point: 17
+model_saved_name: ''
+nesterov: true
+num_epoch: 140
+num_worker: 0
+optimizer: SGD
+phase: train
+print_log: true
+save_epoch: 1
+save_interval: 1
+save_score: false
+seed: 42
+show_topk: [1, 5]
+start_epoch: 0
+step: [110, 120]
+test_batch_size: 16
+test_feeder_args:
+  bone: false
+  data_path: data/ntuYOLO/full/NTU60_CS.npz
+  debug: false
+  normalization: false
+  p_interval: [1, 1]
+  random_move: false
+  random_shift: false
+  split: test
+  vel: false
+  window_size: 64
+train_feeder_args:
+  bone: false
+  data_path: data/ntuYOLO/full/NTU60_CS.npz
+  debug: false
+  normalization: false
+  p_interval: [0.5, 1]
+  random_move: true
+  random_rot: true
+  random_shift: true
+  split: train
+  vel: false
+  window_size: 64
+warm_up_epoch: 5
+weight_decay: 0.0004
+weights: null
+work_dir: ./work_dir/ntu60/yolo/full/joint
